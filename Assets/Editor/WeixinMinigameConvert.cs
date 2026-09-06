@@ -19,7 +19,7 @@ public static class WeixinMinigameConvert
         config.ProjectConf.StreamCDN = "";
 
         var err = WXConvertCore.DoExport(true);
-        if (err == WXExportError.SUCCEED)
+        if (err == WXConvertCore.WXExportError.SUCCEED)
         {
             Debug.Log("✅ WX CONVERT SUCCESS: " + config.ProjectConf.DST + "/minigame");
             EditorApplication.Exit(0);

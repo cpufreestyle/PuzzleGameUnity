@@ -57,3 +57,16 @@ $RECYCLE.BIN/
 
 # Codely CLI local tooling
 .codely-cli/
+
+# WeChat SDK heavy binaries (kept locally only, safe to trim)
+Assets/WX-WASM-SDK-V2/Editor/LuaHooker
+Assets/WX-WASM-SDK-V2/Editor/Node
+Assets/WX-WASM-SDK-V2/Editor/TextureEditor
+Assets/WX-WASM-SDK-V2/Editor/convert.exe
+Assets/WX-WASM-SDK-V2/Editor/convert.exe.meta
+
+# WeChat minigame intermediate webgl build (final package is Builds/WeChatMiniGame/minigame)
+Builds/WeChatMiniGame/webgl
+
+# Superseded standalone wasm player output
+Builds/WeixinMiniGame
