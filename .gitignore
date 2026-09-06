@@ -70,3 +70,7 @@ Builds/WeChatMiniGame/webgl
 
 # Superseded standalone wasm player output
 Builds/WeixinMiniGame
+
+# Conversion runtime logs
+Logs/
+TextToolDatas/
