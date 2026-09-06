@@ -298,7 +298,7 @@ MonoBehaviour:
   - {fileID: 243429959}
   - {fileID: 20707481}
   - {fileID: 1352903742}
-  AnimSpeed: 10
+  AnimSpeed: 40
 --- !u!1 &241433645
 GameObject:
   m_ObjectHideFlags: 0

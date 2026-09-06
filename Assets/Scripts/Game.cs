@@ -11,7 +11,7 @@ public class Game : MonoBehaviour
     [Header("Pieces")]
     public GameObject piecePrefab;
     public Sprite[] puzzleImages;
-    public float AnimSpeed = 14f;
+    public float AnimSpeed = 40f;
 
     [Header("UI (auto-created if null)")]
     public TMP_Text statusText;
