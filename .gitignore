@@ -54,3 +54,6 @@ $RECYCLE.BIN/
 *.msp
 
 .vs
+
+# Codely CLI local tooling
+.codely-cli/
