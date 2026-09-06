@@ -74,3 +74,5 @@ Builds/WeixinMiniGame
 # Conversion runtime logs
 Logs/
 TextToolDatas/
+# WeChat minigame build output (generated, large)
+Builds/WeChatMiniGame/

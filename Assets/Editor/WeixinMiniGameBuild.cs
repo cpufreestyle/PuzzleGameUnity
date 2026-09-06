@@ -31,8 +31,8 @@ public static class WeixinMiniGameBuild
             }
         }
 
-        // 输出（目录内含 game.js/game.json，可直接用微信开发者工具打开）
-        string outputPath = "Builds/WeixinMiniGame";
+        // 输出（团结管线最终写到 Builds/WeChatMiniGame：minigame/ 供微信开发者工具打开，webgl/ 为网页预览版）
+        string outputPath = "Builds/WeChatMiniGame";
         Directory.CreateDirectory(outputPath);
 
         // 构建
