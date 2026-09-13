@@ -1,0 +1,896 @@
+/*
+    Copyright(C) 2026 Altom Consulting
+*/
+
+using System;
+using System.Collections;
+using System.Net;
+using System.Net.Http;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using AltTester.AltTesterSDK.Driver;
+using AltTester.AltTesterUnitySDK.Commands;
+using AltTester.AltTesterUnitySDK.Communication;
+using AltTester.AltTesterUnitySDK.InputModule;
+using AltTester.AltTesterUnitySDK.Logging;
+using AltTester.AltTesterUnitySDK.Notification;
+using Newtonsoft.Json.Linq;
+using UnityEngine;
+using UnityEngine.Networking;
+using UnityEngine.UI;
+
+
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+
+namespace AltTester.AltTesterUnitySDK.UI
+{
+    public class AltDialog : UnityEngine.MonoBehaviour
+    {
+        private static readonly NLog.Logger logger = ServerLogManager.Instance.GetCurrentClassLogger();
+
+        private static readonly Color primarySuccessColor = new Color32(0, 165, 36, 255);
+        private static readonly Color secondarySuccessColor = new Color32(0, 115, 25, 255);
+        private static readonly Color primaryErrorColor = new Color32(191, 71, 85, 255);
+        private static readonly Color secondaryErrorColor = new Color32(136, 47, 58, 255);
+
+        private static readonly Tuple<Color, Color> successColor = new Tuple<Color, Color>(primarySuccessColor, secondarySuccessColor);
+        private static readonly Tuple<Color, Color> errorColor = new Tuple<Color, Color>(primaryErrorColor, secondaryErrorColor);
+        private static readonly Color warningColor = new Color32(255, 255, 95, 255);
+
+        private const string HOST = "AltTesterHost";
+        private const string PORT = "AltTesterPort";
+        private const string PROTOCOL = "AltTesterProtocol";
+        private const string APP_NAME = "AltTesterAppName";
+        private const string UID = "UID";
+        private const string SHOW_POPUP_ON_STARTUP = "ShowNativePopupOnStartup";
+
+        public static AltDialog Instance { get; private set; }
+
+        private int responseCode = 0;
+
+        [SerializeField]
+        public GameObject Dialog = null;
+
+        [SerializeField]
+        public Text TitleText = null;
+
+        [SerializeField]
+        public Text SubtitleText = null;
+
+        [SerializeField]
+        public GameObject InfoArea = null;
+
+        [SerializeField]
+        public Text MessageText = null;
+
+        [SerializeField]
+        public UnityEngine.UI.Button CloseButton = null;
+
+        [SerializeField]
+        public UnityEngine.UI.Image Icon = null;
+
+        [SerializeField]
+        public Text InfoLabel = null;
+
+
+        [SerializeField]
+        public InputField HostInputField = null;
+
+        [SerializeField]
+        public InputField PortInputField = null;
+
+        [SerializeField]
+        public InputField AppNameInputField = null;
+        [SerializeField]
+        public UnityEngine.UI.Button RestartButton = null;
+
+        [SerializeField]
+        public UnityEngine.UI.Toggle CustomInputToggle = null;
+        [SerializeField] public Button LogButton = null;
+        [SerializeField] public GameObject LogsPanel = null;
+        public AltInstrumentationSettings InstrumentationSettings { get { return AltRunner._altRunner.InstrumentationSettings; } }
+
+        public bool StillDisplayingNewVersionMessage { get => stillDisplayingMessage; set => stillDisplayingMessage = value; }
+
+        private RuntimeCommunicationHandler communicationClient;
+        private LiveUpdateCommunicationHandler liveUpdateClient;
+        private readonly AltResponseQueue updateQueue = new AltResponseQueue();
+        int connectedDrivers = 0;
+
+        private bool isDataValid = false;
+        private bool wasConnected = false;
+        private float timeSinceLastScreenshotWasSent;
+        private string appId, platform, platformVersion, deviceInstanceId, currentProtocol, currentHost, currentName, currentPort; //Connection parameters and tags
+
+        private bool stopClientsCalled = false;
+        private bool beginCommunicationCalled = false;
+        private bool isEditing = false;
+        private bool isError = false;
+        private bool isCommunicationConnected;
+        private bool isLiveUpdateConnected;
+        private bool isDriverConnected;
+
+        private UnityEngine.UI.Image dialogImage;
+        private UnityEngine.UI.Image infoArea;
+        private UnityEngine.UI.Image restartButton;
+
+        private bool isNewVersionAvailable = false;
+        private string newVersionMessage = "";
+        private string currentMessage = "";
+        private Tuple<Color, Color> currentColor = null;
+        private bool currentIsVisible = false;
+        private bool stillDisplayingMessage = false;
+        private Coroutine runningCoroutine;
+        private string downloadURL = "";
+        private string colorCode = "#FFD700";
+        private Image logButtonImage;
+
+        private bool waitingToConnect;
+
+        protected void Awake()
+        {
+            Instance = this;
+            dialogImage = Dialog.GetComponent<UnityEngine.UI.Image>();
+            infoArea = InfoArea.GetComponent<UnityEngine.UI.Image>();
+            restartButton = RestartButton.GetComponent<UnityEngine.UI.Image>();
+            logButtonImage = LogButton.GetComponent<UnityEngine.UI.Image>();
+
+        }
+
+        private void hideGreenPopup()
+        {
+            foreach (var image in gameObject.GetComponentsInChildren<Image>())
+            {
+                image.enabled = false;
+            }
+            foreach (var inputField in gameObject.GetComponentsInChildren<InputField>())
+            {
+                inputField.enabled = false;
+            }
+            foreach (var text in gameObject.GetComponentsInChildren<Text>())
+            {
+
+                text.enabled = false;
+            }
+        }
+        public void ToggleGreenPopup()
+        {
+            foreach (var image in gameObject.GetComponentsInChildren<Image>())
+            {
+                image.enabled = !image.enabled;
+            }
+            foreach (var inputField in gameObject.GetComponentsInChildren<InputField>())
+            {
+                inputField.enabled = !inputField.enabled;
+            }
+            foreach (var text in gameObject.GetComponentsInChildren<Text>())
+            {
+                if (text.gameObject.name.Contains("Placeholder"))
+                    continue;
+                text.enabled = !text.enabled;
+            }
+        }
+
+        protected void Start()
+        {
+            resetConnectionDataBasedOnUID();
+
+            setTitle("AltTester® v." + AltRunner.VERSION);
+            handleNewVersionCheck();
+            setUpCloseButton();
+            setUpIcon();
+            setUpAppNameInputField();
+            setUpHostInputField();
+            setUpPortInputField();
+
+            resetConnectionDataBasedOnUID();
+            setUpRestartButton();
+            setUpCustomInputToggle();
+            setUpLogButton();
+
+            this.platform = Application.platform.ToString();
+            this.platformVersion = SystemInfo.operatingSystem;
+            this.deviceInstanceId = SystemInfo.deviceUniqueIdentifier;
+            validateFields();
+            onStart();
+
+            //Connection
+            if (isDataValid)
+                StartCoroutine(ReconnectAfterDelay(2f));
+            InvokeRepeating(nameof(CheckAlive), 5, 5);
+
+            if (AltRunner._altRunner.InstrumentationSettings != null)
+            {
+                if (AltRunner._altRunner.InstrumentationSettings.hideGreenPopup)
+                {
+                    hideGreenPopup();
+                }
+
+            }
+        }
+
+        public bool IsConnectedToServer()
+        {
+            return isCommunicationConnected;
+        }
+
+        private void checkInputSystem()
+        {
+            UnityEngine.Debug.Log($"AltTester| Active input system: {InputMisc.GetInputSystemType()}");
+        }
+        private IEnumerator ReconnectAfterDelay(float delay)
+        {
+            // Prevent multiple pending reconnect coroutines from overlapping.
+            // If a reconnect is already scheduled or in progress, exit early.
+            if (waitingToConnect)
+            {
+                yield break;
+            }
+
+            waitingToConnect = true;
+            yield return new WaitForSecondsRealtime(delay);
+            waitingToConnect = false;
+
+            if (!isEditing && isDataValid)
+            {
+                beginCommunication();
+            }
+        }
+
+
+        protected void CheckAlive() // This method is just to see if sending a ping will keep client from disconnecting .
+        {
+            if (liveUpdateClient != null)
+            {
+                var test = liveUpdateClient.IsConnected;
+            }
+            if (communicationClient != null)
+            {
+                var test = communicationClient.IsConnected;
+            }
+        }
+
+        protected void Update()
+        {
+            updateQueue.Cycle();
+            checkIfPlayerPrefNeedsToBeDeleted();
+            setRestartButtonInteractable(isEditing);
+            if (InputMisc.TogglePopup())
+            {
+                ToggleGreenPopup();
+            }
+            if (this.liveUpdateClient == null || !this.liveUpdateClient.IsRunning || !this.liveUpdateClient.IsConnected)
+                return;
+
+            timeSinceLastScreenshotWasSent += Time.unscaledDeltaTime;
+            if (timeSinceLastScreenshotWasSent > 1.0f / this.liveUpdateClient.FrameRate)
+            {
+                timeSinceLastScreenshotWasSent = 0.0f;
+                StartCoroutine(this.SendScreenshot());
+            }
+        }
+
+        private void checkIfPlayerPrefNeedsToBeDeleted()
+        {
+            if (InputMisc.IsResetConnectionShortcutPressed())
+            {
+                PlayerPrefs.DeleteKey(UID);
+                resetConnectionDataBasedOnUID();
+            }
+        }
+
+        private void initLiveUpdateClient()
+        {
+            liveUpdateClient = new LiveUpdateCommunicationHandler(currentHost, int.Parse(currentPort), currentName, platform, platformVersion, deviceInstanceId, appId);
+            liveUpdateClient.OnDisconnect += onDisconnect;
+            liveUpdateClient.OnError += onError;
+            liveUpdateClient.OnConnect += onLiveUpdateConnected;
+            liveUpdateClient.Init();
+        }
+
+        private void beginCommunication()
+        {
+            if (beginCommunicationCalled)
+            {
+                return;
+            }
+            beginCommunicationCalled = true;
+
+            ToggleCustomInput(false);
+            initCommunicationClient();
+            startClient(communicationClient);
+
+            beginCommunicationCalled = false;
+        }
+
+        private void beginLiveUpdate()
+        {
+            initLiveUpdateClient();
+            startClient(liveUpdateClient);
+        }
+
+        protected IEnumerator SendScreenshot()
+        {
+            if (Application.isBatchMode)
+                yield return null;
+            else
+                yield return new WaitForEndOfFrame();
+            this.liveUpdateClient.SendScreenshot();
+        }
+
+        protected void OnApplicationQuit()
+        {
+            isEditing = true; //I set it true here to stop starting the communication in stopClients()
+            stopClients();
+        }
+
+        private void setMessage(string message, Tuple<Color, Color> color, bool visible = true)
+        {
+            currentMessage = message;
+            currentColor = color;
+            currentIsVisible = visible;
+            if (stillDisplayingMessage)
+            {
+                return;
+            }
+            var primaryColor = color.Item1;
+            var secondaryColor = color.Item2;
+
+            Dialog.SetActive(visible);
+            dialogImage.color = primaryColor;
+            restartButton.color = secondaryColor;
+            infoArea.color = secondaryColor;
+            logButtonImage.color = secondaryColor;
+            MessageText.text = message;
+        }
+
+        private void setTitle(string title) => TitleText.text = title;
+
+
+        private void toggleDialog()
+        {
+            if (Dialog.activeSelf && runningCoroutine != null)
+                CloseNewVersionMessage(true);
+            Dialog.SetActive(!Dialog.activeSelf);
+        }
+
+        private void setUpCloseButton() => CloseButton.onClick.AddListener(toggleDialog);
+
+        private void setUpIcon() => Icon.GetComponent<UnityEngine.UI.Button>().onClick.AddListener(toggleDialog);
+
+        private void onPortInputFieldValueChange(string value)
+        {
+            // Allow only positive numbers.
+            if (value == "-")
+            {
+                PortInputField.text = "";
+            }
+            onValueChanged();
+        }
+
+        private void resetConnectionDataBasedOnUID()
+        {
+            if (InstrumentationSettings.UID == PlayerPrefs.GetString(UID, ""))
+                return;
+            if (InstrumentationSettings.ResetConnectionData)
+            {
+                PlayerPrefs.SetString(HOST, InstrumentationSettings.AltServerHost);
+                PlayerPrefs.SetInt(PORT, InstrumentationSettings.AltServerPort);
+                PlayerPrefs.SetString(APP_NAME, InstrumentationSettings.AppName);
+            }
+            PlayerPrefs.SetString(UID, InstrumentationSettings.UID);
+            currentHost = PlayerPrefs.GetString(HOST, InstrumentationSettings.AltServerHost);
+            currentPort = PlayerPrefs.GetString(PORT, InstrumentationSettings.AltServerPort.ToString());
+            currentName = PlayerPrefs.GetString(APP_NAME, InstrumentationSettings.AppName);
+            HostInputField.text = currentHost;
+            PortInputField.text = currentPort;
+            AppNameInputField.text = currentName;
+        }
+
+        private void setUpHostInputField()
+        {
+            currentHost = PlayerPrefs.GetString(HOST, InstrumentationSettings.AltServerHost);
+            HostInputField.text = currentHost;
+            HostInputField.onValueChanged.AddListener(onValueChanged);
+        }
+
+        private void setUpPortInputField()
+        {
+            currentPort = PlayerPrefs.GetString(PORT, InstrumentationSettings.AltServerPort.ToString());
+            PortInputField.text = currentPort;
+            PortInputField.onValueChanged.AddListener(onPortInputFieldValueChange);
+            PortInputField.characterValidation = InputField.CharacterValidation.Integer;
+        }
+
+        private void setUpAppNameInputField()
+        {
+            currentName = PlayerPrefs.GetString(APP_NAME, InstrumentationSettings.AppName);
+            AppNameInputField.text = currentName;
+            AppNameInputField.onValueChanged.AddListener(onValueChanged);
+        }
+
+        private void onValueChanged(string _ = "")
+        {
+            isEditing = true;
+            string message = createMessage();
+            setMessage(message, color: successColor, visible: Dialog.activeSelf);
+        }
+
+
+        private void restartConnection(string host, string port, string appName)
+        {
+            Debug.Log($"Restarting connection with new values - Host: {host}, Port: {port}, App Name: {appName}");
+            if (!string.IsNullOrEmpty(host))
+            {
+                HostInputField.text = host;
+            }
+            if (!string.IsNullOrEmpty(port))
+            {
+                PortInputField.text = port;
+            }
+            if (!string.IsNullOrEmpty(appName))
+            {
+                AppNameInputField.text = appName;
+            }
+
+            onRestartButtonPress();
+        }
+
+        private void onRestartButtonPress()
+        {
+            appId = null;
+            responseCode = 0;
+            isError = false;
+            validateFields();
+            if (isDataValid)
+                isEditing = false;
+            stopClients();
+        }
+
+        private void validateFields()
+        {
+            isDataValid = false;
+
+            if (Uri.CheckHostName(HostInputField.text) != UriHostNameType.Unknown)
+            {
+                currentHost = HostInputField.text;
+                InstrumentationSettings.AltServerHost = currentHost;
+            }
+            else
+            {
+                setMessage("The host should be a valid host.", color: errorColor, visible: true);
+                return;
+            }
+
+            int port;
+            if (int.TryParse(PortInputField.text, out port) && port > 0 && port <= 65535)
+            {
+                currentPort = port.ToString();
+                InstrumentationSettings.AltServerPort = port;
+            }
+            else
+            {
+                setMessage("The port number should be between 1 and 65535.", color: errorColor, visible: true);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(AppNameInputField.text))
+            {
+                currentName = AppNameInputField.text;
+                InstrumentationSettings.AppName = currentName;
+            }
+            else
+            {
+                setMessage("App name should not be empty.", color: errorColor, visible: true);
+                return;
+            }
+            isDataValid = true;
+        }
+
+        private void setUpRestartButton() => RestartButton.onClick.AddListener(onRestartButtonPress);
+
+        private void setUpCustomInputToggle()
+        {
+            CustomInputToggle.onValueChanged.AddListener(ToggleCustomInput);
+            ToggleCustomInput(false);
+        }
+        private void setUpLogButton()
+        {
+            LogButton.onClick.AddListener(() => LogsPanel.SetActive(true));
+            LogsPanel.SetActive(false);
+        }
+
+        public void ToggleCustomInput(bool value)
+        {
+            CustomInputToggle.isOn = value;
+            Icon.color = value ? Color.white : Color.grey;
+            InputMisc.ActivateCustomInput(value);
+        }
+
+        private void initCommunicationClient()
+        {
+            communicationClient = new RuntimeCommunicationHandler(currentHost, int.Parse(currentPort), currentName, platform, platformVersion, deviceInstanceId, appId == null ? "unknown" : appId);
+            communicationClient.OnConnect += onCommunicationConnected;
+            communicationClient.OnDisconnect += onDisconnect;
+            communicationClient.OnError += onError;
+
+            communicationClient.CmdHandler.OnDriverConnect += onDriverConnect;
+            communicationClient.CmdHandler.OnDriverDisconnect += onDriverDisconnect;
+            communicationClient.CmdHandler.OnAppConnect += onAppConnect;
+            communicationClient.Init();
+        }
+
+        private void setRestartButtonInteractable(bool isInteractable)
+        {
+            if (RestartButton.interactable != isInteractable)
+                RestartButton.interactable = isInteractable;
+        }
+
+        private void startClient(BaseCommunicationHandler communicationHandler)
+        {
+            try
+            {
+                communicationHandler.waitingToConnect = true;
+                communicationHandler.Connect();
+                isCommunicationConnected = true;
+            }
+            catch (InvalidOperationException e)
+            {
+                Debug.LogError(e.Message);
+                stopClient(communicationHandler);
+                communicationHandler.waitingToConnect = false;
+                if (communicationHandler.GetType().Equals(typeof(RuntimeCommunicationHandler)))
+                {
+                    initCommunicationClient();
+                }
+                else
+                {
+                    initLiveUpdateClient();
+                }
+
+            }
+            catch (Exception ex)
+            {
+
+                setMessage("An unexpected error occurred while starting the AltTester(R) client.", color: errorColor, visible: true);
+                logger.Error(ex, "An unexpected error occurred while starting the AltTester(R) client.");
+                stopClient(communicationHandler);
+                communicationHandler.waitingToConnect = false;
+            }
+        }
+
+        private void stopClients()
+        {
+            if (stopClientsCalled) // Stop clients was already called
+                return;
+
+            stopClientsCalled = true;
+            try
+            {
+                connectedDrivers = 0;
+                if (isCommunicationConnected)
+                {
+                    stopCommunicationClient();
+                    isCommunicationConnected = false;
+                }
+
+                if (isLiveUpdateConnected)
+                {
+                    stopLiveUpdateClient();
+                    isLiveUpdateConnected = false;
+                }
+
+                wasConnected = false;
+                if ((responseCode > 4000 && responseCode < 5000)
+                )
+                {
+                    isEditing = true;
+                    stopClientsCalled = false;
+                    return;
+                }
+
+                if (!isEditing && isDataValid) //If is not editing the input field try reconnecting
+                {
+                    updateQueue.Clear();
+                    onStart();
+                    StartCoroutine(ReconnectAfterDelay(2f));
+                }
+            }
+            catch (Exception e)
+            {
+                updateQueue.ScheduleResponse(() => Debug.LogError(e));
+            }
+
+            isDriverConnected = false;
+            stopClientsCalled = false;
+        }
+
+        private void stopCommunicationClient()
+        {
+            stopClient(communicationClient);
+            communicationClient = null;
+            isCommunicationConnected = false;
+        }
+
+        private void stopLiveUpdateClient()
+        {
+            stopClient(liveUpdateClient);
+            liveUpdateClient = null;
+        }
+
+        private static void stopClient(BaseCommunicationHandler communicationHandler)
+        {
+            if (communicationHandler == null)
+            {
+                return;
+            }
+
+            // Remove the callbacks before stopping the client to prevent the OnDisconnect callback to be called when we stop or restart the client.
+            communicationHandler.OnConnect = null;
+            communicationHandler.OnDisconnect = null;
+            communicationHandler.OnError = null;
+
+            StopNotifications();
+            if (communicationHandler.IsConnected)
+                communicationHandler.Close();
+        }
+
+        private static void StopNotifications()
+        {
+            AltLoadSceneNotification.StopSceneLoaded();
+            AltUnloadSceneNotification.StopSceneUnloaded();
+            AltTesterApplicationPausedNotification.StopApplicationPaused();
+            AltLogNotification.StopLogReceived();
+        }
+
+        private void onDisconnect(int code, string reason)
+        {
+            StopNotifications();
+
+            responseCode = code;
+            if (code >= 4000 && code < 5000)
+            {
+                isError = true;
+                updateQueue.ScheduleResponse(() => setMessage(reason, errorColor, true));
+            }
+            updateQueue.ScheduleResponse(() => stopClients());
+        }
+
+        private void onStart()
+        {
+            string message = createMessage();
+            setMessage(message, color: successColor, visible: Dialog.activeSelf);
+        }
+
+        private string createMessage()
+        {
+            if (isEditing)
+            {
+                var aux = $"Editing the app name, host, or port.";
+                return aux + $"{Environment.NewLine}Press the <b>Restart</b> button to start connection with the new values.";
+            }
+
+            string message = wasConnected ? "Connected to " : "Waiting to connect to ";
+            message += $"<b>AltTester® Server</b> on <b>ws://{currentHost}:{currentPort}</b> with: {Environment.NewLine}";
+
+            message += $"{Environment.NewLine}<b>App Name</b>{Environment.NewLine}{currentName}" +
+                       $"{Environment.NewLine}<b>Platform</b>{Environment.NewLine}{platform}" +
+                       $"{Environment.NewLine}<b>Platform Version</b>{Environment.NewLine}{platformVersion}" +
+                       $"{Environment.NewLine}<b>Device Instance ID</b>{Environment.NewLine}{deviceInstanceId}" +
+                       $"{Environment.NewLine}<b>App ID</b>{Environment.NewLine}{(string.IsNullOrEmpty(appId) ? "unknown" : appId)}";
+
+            if (wasConnected)
+                message += isDriverConnected ? $"{Environment.NewLine}{Environment.NewLine}Driver connected." : $"{Environment.NewLine}{Environment.NewLine}Waiting for Driver to connect.";
+
+            return message;
+        }
+
+        private void onCommunicationConnected()
+        {
+            isCommunicationConnected = true;
+        }
+
+        private void onLiveUpdateConnected()
+        {
+            isLiveUpdateConnected = true;
+            updateQueue.ScheduleResponse(() => onConnect());
+        }
+
+        private void onConnect()
+        {
+            wasConnected = true;
+            if (!isDriverConnected && !isError)
+            {
+                string message = createMessage();
+                setMessage(message, color: successColor, visible: true);
+            }
+        }
+
+        private void onError(string message, Exception ex)
+        {
+            if (message.Equals("An exception has occurred while reading an HTTP request/response.") ||
+                message.Equals("An error has occurred during a TLS handshake.") ||
+                message.Equals("[AltTester WebSocket] Connection failed. Server is not running or unreachable."))
+            {
+                // This error happens when the server closes the connection abruptly 
+                // or the server is not running. We can ignore it.
+                return;
+            }
+
+            logger.Error(message);
+            if (ex != null)
+            {
+                logger.Error(ex);
+            }
+        }
+
+        private void onDriverConnect(string driverId)
+        {
+            logger.Debug("Driver Connected: " + driverId);
+            isDriverConnected = true;
+            string message = createMessage();
+
+            connectedDrivers++;
+
+            if (connectedDrivers == 1)
+            {
+                updateQueue.ScheduleResponse(() =>
+                {
+
+                    if (runningCoroutine != null)
+                        CloseNewVersionMessage(true);
+
+                    PlayerPrefs.SetString(HOST, currentHost);
+                    PlayerPrefs.SetString(PORT, currentPort);
+                    PlayerPrefs.SetString(APP_NAME, currentName);
+                    PlayerPrefs.Save();
+                    ToggleCustomInput(true);
+                    setMessage(message, color: successColor, visible: false);
+                });
+            }
+        }
+
+        private void onAppConnect(string appId)
+        {
+            this.appId = appId;
+            updateQueue.ScheduleResponse(() => beginLiveUpdate());
+
+        }
+
+        private void onDriverDisconnect(string driverId)
+        {
+            connectedDrivers--;
+            if (connectedDrivers == 0)
+            {
+                isDriverConnected = false;
+                string message = createMessage();
+
+                updateQueue.ScheduleResponse(() =>
+                {
+                    ToggleCustomInput(false);
+                    setMessage(message, color: successColor, visible: true);
+                });
+            }
+        }
+
+
+
+        private IEnumerator getRequest()
+        {
+
+            using (UnityWebRequest request = UnityWebRequest.Get("https://alttester.com/wp-json/app/v1/latest-version"))
+            {
+                yield return request.SendWebRequest();
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    UnityEngine.Debug.Log("There was a problem with the request.");
+                    yield break;
+                }
+                string textReceived = request.downloadHandler.text;
+
+                JObject obj = JObject.Parse(textReceived);
+                string version = obj["GPL"].ToString();
+                downloadURL = obj["GPLURL"].ToString();
+
+                if (isCurrentVersionOlderOrEqualThanRelease(version, AltRunner.VERSION.Split("-")[0]))
+                {
+                    isNewVersionAvailable = false;
+                    UnityEngine.Debug.Log("There is no new version available to download");
+                }
+                else
+                {
+                    isNewVersionAvailable = true;
+                    newVersionMessage = $"<size=26>Version <b>{version}</b> is available to <b><color={colorCode}>download</color></b>.</size>";
+                }
+            }
+
+        }
+
+        private bool isCurrentVersionOlderOrEqualThanRelease(string releasedVersion, string version)
+        {
+            var releasedVersionParts = releasedVersion.Split('.');
+            var currentVersionParts = version.Split('.');
+            if (short.Parse(currentVersionParts[0]) != short.Parse(releasedVersionParts[0]))//check major number
+            {
+                return short.Parse(currentVersionParts[0]) > short.Parse(releasedVersionParts[0]);
+            }
+            if (short.Parse(currentVersionParts[1]) != short.Parse(releasedVersionParts[1]))//check minor number
+            {
+                return short.Parse(currentVersionParts[1]) > short.Parse(releasedVersionParts[1]);
+            }
+            return short.Parse(currentVersionParts[2]) >= short.Parse(releasedVersionParts[2]);//check patch number
+
+        }
+        public static async Task<HttpResponseMessage> Get(string url)
+        {
+            using (var handler = new HttpClientHandler())
+            {
+                IWebProxy proxy = WebRequest.GetSystemWebProxy();
+                proxy.Credentials = CredentialCache.DefaultCredentials;
+                handler.Proxy = proxy;
+                using (var client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromMilliseconds(50000);
+                    return await client.GetAsync(url);
+                }
+            }
+        }
+        private void handleNewVersionCheck()
+        {
+            if (runningCoroutine != null)
+            {
+                StopCoroutine(runningCoroutine);
+                runningCoroutine = null;
+            }
+
+            runningCoroutine = StartCoroutine(showNewVersionMessage());
+        }
+
+        private IEnumerator showNewVersionMessage()
+        {
+            stillDisplayingMessage = true;
+            Dialog.SetActive(true);
+
+            float totalTime = 30;
+            float interval = 1;
+            var currentTime = 0f;
+            var getRequestCoroutine = StartCoroutine(getRequest());
+            yield return getRequestCoroutine;
+            if (!isNewVersionAvailable)
+            {
+                CloseNewVersionMessage();
+                yield break;
+            }
+            while (currentTime < totalTime)
+            {
+                MessageText.text = $"{newVersionMessage} {Environment.NewLine}{Environment.NewLine}{Environment.NewLine}{Environment.NewLine}{Environment.NewLine}{Environment.NewLine}{Environment.NewLine}{Environment.NewLine}" +
+                   $"This message will disappear in <b>{totalTime - currentTime}</b> seconds.{Environment.NewLine}" +
+                   $"<b><color={colorCode}>Click here to close.</color></b>";
+
+
+                yield return new WaitForSeconds(interval);
+                currentTime = Mathf.Min(currentTime + interval, totalTime);
+            }
+            CloseNewVersionMessage();
+
+
+        }
+
+        internal void CloseNewVersionMessage(bool shouldStopCoroutine = false)
+        {
+            if (shouldStopCoroutine)
+            {
+                StopCoroutine(runningCoroutine);
+                runningCoroutine = null;
+            }
+            stillDisplayingMessage = false;
+            setMessage(currentMessage, currentColor, currentIsVisible);
+        }
+        internal void DownloadNewVersion()
+        {
+            Application.OpenURL(downloadURL);
+        }
+    }
+}

@@ -14,9 +14,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ProjectConf:
     projectName: PuzzleGame
-    Appid: touristappid
+    Appid: wx27892251b37342a7
     CDN: 
-    assetLoadType: 0
+    assetLoadType: 1
     compressDataPackage: 0
     VideoUrl: 
     relativeDST: Builds/WeChatMiniGame

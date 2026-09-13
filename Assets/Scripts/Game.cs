@@ -26,6 +26,7 @@ public class Game : MonoBehaviour
     private Vector3 screenPosToAnimate;
 
     private int moveCount;
+    private float cellW, cellH;      // 单个棋盘格的世界宽/高(保持照片宽高比, 严丝合缝)
     private float startTime;
     private bool timerRunning;
     private int currentImageIndex = 0;
@@ -40,11 +41,14 @@ public class Game : MonoBehaviour
     void Start()
     {
         mainCam = Camera.main;
+        // 强制相机视口比例 = 画布比例, 防止模拟器/真机 canvas 尺寸上报错乱导致的拉伸
+        if (Screen.height > 0)
+            mainCam.aspect = (float)Screen.width / Screen.height;
         EnsureUI();
         EnsureAudio();
 
-        // 从 PlayerPrefs 读上次选择的难度
-        gridSize = PlayerPrefs.GetInt("GridSize", 4);
+        // 从 PlayerPrefs 读上次选择的难度, 并钳制到合法范围(3~5)
+        gridSize = Mathf.Clamp(PlayerPrefs.GetInt("GridSize", 4), 3, 5);
         currentImageIndex = PlayerPrefs.GetInt("ImageIndex", 0);
 
         if (puzzleImages == null || puzzleImages.Length == 0)
@@ -62,12 +66,21 @@ public class Game : MonoBehaviour
 
     void InitBoard()
     {
+        // 兜底：任何情况下不允许空图集进初始化（空数组会让取模运算崩溃）
+        if (puzzleImages == null || puzzleImages.Length == 0)
+        {
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            tex.SetPixels32(new[] { new Color32(72, 145, 220, 255), new Color32(72, 145, 220, 255),
+                                   new Color32(56, 118, 178, 255), new Color32(56, 118, 178, 255) });
+            tex.Apply();
+            puzzleImages = new Sprite[] { Sprite.Create(tex, new Rect(0, 0, 2, 2), new Vector2(0.5f, 0.5f), 2f) };
+        }
+
         // 清理旧拼图
         foreach (var p in pieces) if (p) Destroy(p);
         pieces.Clear();
 
         matrix = new Piece[gridSize, gridSize];
-        float cellSize = 1f / gridSize;
 
         Sprite img = puzzleImages[currentImageIndex % puzzleImages.Length];
         int idx = 0;
@@ -134,6 +147,14 @@ public class Game : MonoBehaviour
 
     void Update()
     {
+        // 视口比例变化(模拟器/真机 resize)时强制纠正相机 aspect 并重摆棋盘
+        float targetAspect = (float)Screen.width / Mathf.Max(1, Screen.height);
+        if (mainCam != null && Mathf.Abs(mainCam.aspect - targetAspect) > 0.001f)
+        {
+            mainCam.aspect = targetAspect;
+            ScalePieces();
+        }
+
         switch (gameState)
         {
             case GameState.Start:
@@ -445,19 +466,40 @@ public class Game : MonoBehaviour
         if (pieces.Count == 0) return;
         var sr = pieces[0].GetComponent<SpriteRenderer>();
         if (sr == null || sr.sprite == null) return;
-        float screenH = mainCam.orthographicSize * 2f;
-        float screenW = screenH / Screen.height * Screen.width;
+        // 用相机视口真实世界边界, 不依赖 Screen 尺寸(模拟器/真机会报错值)
+        var bl = mainCam.ViewportToWorldPoint(new Vector3(0, 0, 0));
+        var tr = mainCam.ViewportToWorldPoint(new Vector3(1, 1, 0));
+        float worldW = Mathf.Abs(tr.x - bl.x);
+        float worldH = Mathf.Abs(tr.y - bl.y);
         float pieceW = sr.sprite.bounds.size.x;
-        float scale = Mathf.Min(screenW / (pieceW * gridSize), screenH / (pieceW * gridSize)) * 0.9f;
+        float pieceH = sr.sprite.bounds.size.y;
+        // 棋盘保持照片宽高比(块是长方形), 在视口内取最大可容纳尺寸 → 块与块严丝合缝
+        float maxBoardW = Mathf.Min(worldW, worldH * pieceW / pieceH);
+        cellW = maxBoardW / gridSize;
+        cellH = cellW * pieceH / pieceW;
         foreach (var p in pieces)
-            p.transform.localScale = new Vector3(scale, scale, 1f);
+        {
+            p.transform.localScale = new Vector3(cellW / pieceW, cellH / pieceH, 1f);
+            var piece = GetPieceByGO(p);
+            if (piece != null)
+                p.transform.position = GetCellWorldPos(piece.CurrentI, piece.CurrentJ);
+        }
+    }
+
+    Piece GetPieceByGO(GameObject go)
+    {
+        for (int i = 0; i < gridSize; i++)
+            for (int j = 0; j < gridSize; j++)
+                if (matrix[i, j] != null && matrix[i, j].GameObject == go)
+                    return matrix[i, j];
+        return null;
     }
 
     Vector3 GetCellWorldPos(int i, int j)
     {
-        float step = 1f / gridSize;
-        Vector3 point = mainCam.ViewportToWorldPoint(new Vector3(step * j + step * 0.5f, 1 - step * i - step * 0.5f, 0));
-        point.z = 0;
-        return point;
+        // 棋盘以屏幕中心为原点, 格子尺寸统一 → 块与块严丝合缝
+        float x = (j - (gridSize - 1) / 2f) * cellW;
+        float y = ((gridSize - 1) / 2f - i) * cellH;
+        return new Vector3(x, y, 0);
     }
 }

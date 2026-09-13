@@ -10,13 +10,15 @@ public static class WeixinMinigameConvert
     {
         var config = UnityUtil.GetEditorConf();
 
-        // Appid: touristappid 为微信官方测试号，正式发布前替换为真实 AppID
-        config.ProjectConf.Appid = "touristappid";
+        // 正式小游戏 AppID
+        config.ProjectConf.Appid = "wx27892251b37342a7";
         config.ProjectConf.projectName = "PuzzleGame";
         config.ProjectConf.relativeDST = "Builds/WeChatMiniGame";
         config.ProjectConf.DST = Path.GetFullPath("Builds/WeChatMiniGame");
         config.ProjectConf.CDN = "";
         config.ProjectConf.StreamCDN = "";
+        // 1 = 资源走小游戏分包（data-package）本地加载；0 = 走 CDN（无 CDN 会卡"正在加载资源"）
+        config.ProjectConf.assetLoadType = 1;
 
         var err = WXConvertCore.DoExport(true);
         if (err == WXConvertCore.WXExportError.SUCCEED)
