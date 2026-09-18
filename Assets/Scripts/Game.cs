@@ -38,6 +38,11 @@ public class Game : MonoBehaviour
     private Vector2 touchStart;
     private bool isSwiping;
 
+    // 长按看原图
+    private SpriteRenderer ghost;   // 半透明原图叠加层
+    private float pressTime;
+    private bool isLongPress;
+
     void Start()
     {
         mainCam = Camera.main;
@@ -112,6 +117,16 @@ public class Game : MonoBehaviour
             }
         }
         matrix[gridSize - 1, gridSize - 1] = null; // 空格
+
+        // 长按看原图的半透明叠加层（尺寸跟随棋盘，见 ScalePieces）
+        if (ghost != null) Destroy(ghost.gameObject);
+        ghost = new GameObject("ghost-preview").AddComponent<SpriteRenderer>();
+        ghost.sprite = img;
+        ghost.sortingOrder = 10;
+        ghost.color = new Color(1f, 1f, 1f, 0.55f);
+        ghost.transform.position = Vector3.zero;
+        ghost.enabled = false;
+
         ScalePieces();
     }
 
@@ -171,7 +186,7 @@ public class Game : MonoBehaviour
                 if (timerRunning)
                 {
                     float elapsed = Time.time - startTime;
-                    UpdateStatusText($"步数: {moveCount}   {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}");
+                    UpdateStatusText($"步数: {moveCount}  错位: {CountMisplaced()}  {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}");
                 }
                 CheckInput();
                 break;
@@ -197,19 +212,38 @@ public class Game : MonoBehaviour
         {
             touchStart = Input.mousePosition;
             isSwiping = false;
+            isLongPress = false;
+            pressTime = 0f;
         }
         if (Input.GetMouseButton(0))
         {
+            pressTime += Time.deltaTime;
+            if (!isSwiping && !isLongPress && pressTime > 0.4f)
+            {
+                isLongPress = true;
+                if (ghost != null) ghost.enabled = true;
+            }
             Vector2 delta = (Vector2)Input.mousePosition - touchStart;
             if (delta.magnitude > 30f && !isSwiping)
             {
                 isSwiping = true;
+                if (isLongPress)
+                {
+                    isLongPress = false;
+                    if (ghost != null) ghost.enabled = false;
+                }
                 HandleSwipe(delta);
             }
         }
         if (Input.GetMouseButtonUp(0))
         {
-            if (!isSwiping)
+            if (isLongPress)
+            {
+                // 长按只看原图，松开不算走子
+                isLongPress = false;
+                if (ghost != null) ghost.enabled = false;
+            }
+            else if (!isSwiping)
                 HandleTap();
             isSwiping = false;
         }
@@ -293,6 +327,7 @@ public class Game : MonoBehaviour
             SwapPositions(pieceToAnimate.CurrentI, pieceToAnimate.CurrentJ, toAnimateI, toAnimateJ);
             moveCount++;
             gameState = GameState.Playing;
+            WeChatWASM.WX.VibrateShort(new WeChatWASM.VibrateShortOption());
             CheckVictory();
         }
     }
@@ -313,6 +348,18 @@ public class Game : MonoBehaviour
         for (int i = 0; i < gridSize; i++)
             for (int j = 0; j < gridSize; j++)
                 if (matrix[i, j] == null) { ei = i; ej = j; return; }
+    }
+
+    int CountMisplaced()
+    {
+        int n = 0;
+        for (int i = 0; i < gridSize; i++)
+            for (int j = 0; j < gridSize; j++)
+                if (matrix[i, j] != null &&
+                    (matrix[i, j].CurrentI != matrix[i, j].OriginalI ||
+                     matrix[i, j].CurrentJ != matrix[i, j].OriginalJ))
+                    n++;
+        return n;
     }
 
     void Shuffle()
@@ -346,7 +393,12 @@ public class Game : MonoBehaviour
         float elapsed = Time.time - startTime;
         StartCoroutine(PlayWinSound());
         SpawnWinParticles();
-        UpdateStatusText($"🎉 通关！\n步数: {moveCount}  时间: {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}\n点击换图重玩");
+        WeChatWASM.WX.VibrateLong(new WeChatWASM.VibrateLongOption());
+        // 评级：d=难度点数；S≈少步快通，A≈中游，B 其余（阈值随难度线性放大）
+        int d = gridSize * gridSize;
+        string rating = moveCount <= d * 5 && elapsed <= d * 7 ? "S"
+            : (moveCount <= d * 8 || elapsed <= d * 12 ? "A" : "B");
+        UpdateStatusText($"通关！评级 {rating}\n步数: {moveCount}  时间: {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}\n点击换图重玩");
         SaveBestRecord(moveCount, elapsed);
         UpdateBestRecord();
     }
@@ -483,6 +535,13 @@ public class Game : MonoBehaviour
             var piece = GetPieceByGO(p);
             if (piece != null)
                 p.transform.position = GetCellWorldPos(piece.CurrentI, piece.CurrentJ);
+        }
+
+        if (ghost != null && ghost.sprite != null)
+        {
+            var b = ghost.sprite.bounds;
+            ghost.transform.localScale = new Vector3(
+                cellW * gridSize / b.size.x, cellH * gridSize / b.size.y, 1f);
         }
     }
 

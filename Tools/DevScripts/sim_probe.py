@@ -16,13 +16,21 @@ PORT = 9223
 
 
 def find_target():
+    import re
     with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json/list", timeout=5) as r:
         targets = json.load(r)
-    cands = [t for t in targets if t.get("type") in ("page", "webview", "iframe")]
-    for t in cands:  # prefer the game webview
+    pages = [t for t in targets if t.get("type") in ("page", "webview", "iframe")]
+    # DevTools 多工程同开：按工程路径映射项目窗口 devid(s0/s1)，只匹配本项目 gamePage
+    session = None
+    for t in pages:
+        if "electron-project" in t.get("url", "") and "PuzzleGameUnity" in t.get("url", ""):
+            m = re.search(r"devid=(s\d+)", t.get("url", ""))
+            session = m.group(1) if m else None
+    for t in pages:  # prefer the game webview of our project session
         if "gamePage" in t.get("url", "") or "gamePage" in t.get("title", ""):
-            return t
-    return cands[0] if cands else None
+            if session is None or re.search(rf"/{session}/", t.get("url", "")):
+                return t
+    return pages[0] if pages else None
 
 
 def main():
@@ -32,6 +40,8 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--reload", action="store_true")
     ap.add_argument("--tap", default=None, help="x,y in CSS px")
+    ap.add_argument("--hold", type=float, default=0,
+                    help="tap 时按住 N 秒再松开（验证长按）；期间截图到 <out>.hold.png")
     args = ap.parse_args()
 
     t = find_target()
@@ -49,6 +59,15 @@ def main():
         mid += 1
         ws.send(json.dumps({"id": mid, "method": method, "params": params or {}}))
         return mid
+
+    def capture(path):
+        i = send("Page.captureScreenshot", {"format": "png"})
+        for m in drain(until_id=i):
+            data = m.get("result", {}).get("data")
+            if data:
+                with open(path, "wb") as f:
+                    f.write(base64.b64decode(data))
+                print(f"SCREENSHOT: {path}")
 
     def drain(until_id=None, deadline=None):
         msgs = []
@@ -110,13 +129,21 @@ def main():
 
     if args.tap:
         x, y = (float(v) for v in args.tap.split(","))
-        for type_, btn in (("mousePressed", "down"), ("mouseReleased", "up")):
+
+        def dispatch(type_):
             send("Input.dispatchMouseEvent", {
                 "type": type_, "x": x, "y": y,
                 "button": "left", "clickCount": 1,
                 "pointerType": "mouse",
             })
-            time.sleep(0.08)
+
+        dispatch("mousePressed")
+        if args.hold > 0:
+            time.sleep(args.hold)
+            if args.out:
+                capture(args.out.replace(".png", ".hold.png"))
+        dispatch("mouseReleased")
+        time.sleep(0.08)
         # give the game a moment to react, then keep draining logs
         deadline = time.time() + 4
         while time.time() < deadline:
@@ -141,13 +168,7 @@ def main():
                 print("EVAL:", json.dumps(m["result"].get("result", {}), ensure_ascii=False)[:800])
 
     if args.out:
-        i = send("Page.captureScreenshot", {"format": "png"})
-        for m in drain(until_id=i):
-            data = m.get("result", {}).get("data")
-            if data:
-                with open(args.out, "wb") as f:
-                    f.write(base64.b64decode(data))
-                print(f"SCREENSHOT: {args.out}")
+        capture(args.out)
 
     print("--- LOGS ---")
     for l in logs[-60:]:
