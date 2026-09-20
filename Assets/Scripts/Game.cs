@@ -32,6 +32,8 @@ public class Game : MonoBehaviour
     private int currentImageIndex = 0;
 
     private AudioSource audioSource;
+    private AudioSource bgmSource;     // 循环 BGM（与一次性音效分离）
+    private AudioClip snapClip, winClip;
     private Camera mainCam;
 
     // Swipe
@@ -311,7 +313,6 @@ public class Game : MonoBehaviour
         screenPosToAnimate = GetCellWorldPos(toI, toJ);
         pieceToAnimate = matrix[fromI, fromJ];
         gameState = GameState.Animating;
-        PlaySound(440f, 0.06f, 0.12f);
     }
 
     void AnimateMovement(Piece toMove, float dt)
@@ -328,6 +329,7 @@ public class Game : MonoBehaviour
             moveCount++;
             gameState = GameState.Playing;
             WeChatWASM.WX.VibrateShort(new WeChatWASM.VibrateShortOption());
+            if (snapClip != null) audioSource.PlayOneShot(snapClip);
             CheckVictory();
         }
     }
@@ -352,14 +354,13 @@ public class Game : MonoBehaviour
 
     int CountMisplaced()
     {
-        int n = 0;
+        var board = new int[gridSize, gridSize];
         for (int i = 0; i < gridSize; i++)
             for (int j = 0; j < gridSize; j++)
-                if (matrix[i, j] != null &&
-                    (matrix[i, j].CurrentI != matrix[i, j].OriginalI ||
-                     matrix[i, j].CurrentJ != matrix[i, j].OriginalJ))
-                    n++;
-        return n;
+                board[i, j] = matrix[i, j] == null
+                    ? -1
+                    : matrix[i, j].OriginalI * gridSize + matrix[i, j].OriginalJ;
+        return PuzzleRules.CountMisplaced(board, gridSize);
     }
 
     void Shuffle()
@@ -392,12 +393,11 @@ public class Game : MonoBehaviour
         timerRunning = false;
         float elapsed = Time.time - startTime;
         StartCoroutine(PlayWinSound());
+        if (winClip != null) audioSource.PlayOneShot(winClip);
         SpawnWinParticles();
         WeChatWASM.WX.VibrateLong(new WeChatWASM.VibrateLongOption());
-        // 评级：d=难度点数；S≈少步快通，A≈中游，B 其余（阈值随难度线性放大）
-        int d = gridSize * gridSize;
-        string rating = moveCount <= d * 5 && elapsed <= d * 7 ? "S"
-            : (moveCount <= d * 8 || elapsed <= d * 12 ? "A" : "B");
+        // 评级/错位计数逻辑抽到 PuzzleRules（纯逻辑，EditMode 可测）
+        string rating = PuzzleRules.Rating(moveCount, elapsed, gridSize);
         UpdateStatusText($"通关！评级 {rating}\n步数: {moveCount}  时间: {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}\n点击换图重玩");
         SaveBestRecord(moveCount, elapsed);
         UpdateBestRecord();
@@ -466,6 +466,19 @@ public class Game : MonoBehaviour
     void EnsureAudio()
     {
         audioSource = GetComponent<AudioSource>() ?? gameObject.AddComponent<AudioSource>();
+
+        // AI 生成音频（Assets/Resources/Audio）；缺失时优雅回退到合成音
+        var bgm = Resources.Load<AudioClip>("Audio/bgm");
+        if (bgm != null)
+        {
+            bgmSource = gameObject.AddComponent<AudioSource>();
+            bgmSource.clip = bgm;
+            bgmSource.loop = true;
+            bgmSource.volume = 0.6f;
+            bgmSource.Play();
+        }
+        snapClip = Resources.Load<AudioClip>("Audio/snap");
+        winClip = Resources.Load<AudioClip>("Audio/win");
     }
 
     void PlaySound(float freq, float dur, float vol = 0.25f)
