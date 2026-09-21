@@ -1,6 +1,7 @@
 ﻿public enum GameState
 {
     DifficultySelect,
+    Menu,
     Start,
     Playing,
     Animating,

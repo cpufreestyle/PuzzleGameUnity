@@ -45,6 +45,12 @@ public class Game : MonoBehaviour
     private float pressTime;
     private bool isLongPress;
 
+    // 模式：经典 / 每日挑战
+    private bool isDaily;
+    private string dailyDate;
+    private GameObject menuPanel;
+    private RectTransform classicBtnRT, dailyBtnRT;
+
     void Start()
     {
         mainCam = Camera.main;
@@ -65,10 +71,11 @@ public class Game : MonoBehaviour
             if (defaultSprite != null) puzzleImages = new Sprite[] { defaultSprite };
         }
 
-        gameState = GameState.Start;
+        gameState = GameState.Menu;
         InitBoard();
         UpdateBestRecord();
-        UpdateStatusText("点击屏幕开始！");
+        EnsureMenu();
+        UpdateStatusText("");
     }
 
     void InitBoard()
@@ -174,6 +181,11 @@ public class Game : MonoBehaviour
 
         switch (gameState)
         {
+            case GameState.Menu:
+                // 菜单态自管点击（见 HandleMenuTap 注释）
+                if (Input.GetMouseButtonUp(0))
+                    HandleMenuTap(Input.mousePosition);
+                break;
             case GameState.Start:
                 if (Input.GetMouseButtonUp(0))
                 {
@@ -398,14 +410,26 @@ public class Game : MonoBehaviour
         WeChatWASM.WX.VibrateLong(new WeChatWASM.VibrateLongOption());
         // 评级/错位计数逻辑抽到 PuzzleRules（纯逻辑，EditMode 可测）
         string rating = PuzzleRules.Rating(moveCount, elapsed, gridSize);
-        UpdateStatusText($"通关！评级 {rating}\n步数: {moveCount}  时间: {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}\n点击换图重玩");
+        string tail = "点击换图重玩";
+        if (isDaily)
+        {
+            int streak = 1;
+            string yesterday = System.DateTime.Now.AddDays(-1).ToString("yyyyMMdd");
+            if (PlayerPrefs.GetString("daily_last", "") == yesterday)
+                streak = PlayerPrefs.GetInt("daily_streak", 0) + 1;
+            PlayerPrefs.SetString("daily_last", dailyDate);
+            PlayerPrefs.SetInt("daily_streak", streak);
+            PlayerPrefs.Save();
+            tail = $"每日挑战完成！连续 {streak} 天\n点击返回菜单";
+        }
+        UpdateStatusText($"通关！评级 {rating}\n步数: {moveCount}  时间: {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}\n{tail}");
         SaveBestRecord(moveCount, elapsed);
         UpdateBestRecord();
     }
 
     void SaveBestRecord(int moves, float time)
     {
-        string key = $"best_{gridSize}";
+        string key = isDaily ? "best_daily" : $"best_{gridSize}";
         int bestMoves = PlayerPrefs.GetInt(key + "_moves", int.MaxValue);
         float bestTime = PlayerPrefs.GetFloat(key + "_time", float.MaxValue);
         if (moves < bestMoves) PlayerPrefs.SetInt(key + "_moves", moves);
@@ -416,13 +440,151 @@ public class Game : MonoBehaviour
     void UpdateBestRecord()
     {
         if (bestRecordText == null) return;
-        string key = $"best_{gridSize}";
+        string key = isDaily ? "best_daily" : $"best_{gridSize}";
         int bm = PlayerPrefs.GetInt(key + "_moves", 0);
         float bt = PlayerPrefs.GetFloat(key + "_time", 0);
         if (bm > 0)
             bestRecordText.text = $"最佳: {bm}步 {Mathf.FloorToInt(bt/60):00}:{Mathf.FloorToInt(bt%60):00}";
         else
             bestRecordText.text = "最佳: 暂无";
+    }
+
+    // === 模式菜单（uGUI 视觉 + 自管命中测试） ===
+    // 小游戏适配层的输入不走 uGUI EventSystem（注入/真机点击都到不了 Button.onClick），
+    // 故保留 uGUI 层级做视觉，点击用项目自有的 Input 轮询通道做矩形命中。
+
+    void EnsureMenu()
+    {
+        if (menuPanel != null) return;
+        var canvas = statusText.transform.parent;
+        menuPanel = new GameObject("MenuPanel", typeof(RectTransform));
+        menuPanel.transform.SetParent(canvas, false);
+        var mrt = (RectTransform)menuPanel.transform;
+        mrt.anchorMin = Vector2.zero; mrt.anchorMax = Vector2.one;
+        mrt.offsetMin = mrt.offsetMax = Vector2.zero;
+
+        // 半透明压暗层（同时挡住对棋盘的误触）
+        var dim = menuPanel.AddComponent<UnityEngine.UI.Image>();
+        dim.color = new Color(0f, 0f, 0f, 0.45f);
+        dim.raycastTarget = true;
+
+        var titleObj = new GameObject("MenuTitle", typeof(RectTransform));
+        titleObj.transform.SetParent(menuPanel.transform, false);
+        var title = titleObj.AddComponent<TextMeshProUGUI>();
+        var trt = (RectTransform)titleObj.transform;
+        trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 1f);
+        trt.anchoredPosition = new Vector2(0, -260);
+        trt.sizeDelta = new Vector2(900, 120);
+        title.alignment = TextAlignmentOptions.Center;
+        title.fontSize = 72;
+        title.color = Color.white;
+        title.raycastTarget = false;
+        title.text = "邱明智慧拼图";
+
+        classicBtnRT = CreateMenuButton("Btn_Classic", "经典模式", -760);
+        dailyBtnRT = CreateMenuButton("Btn_Daily", "每日挑战", -560);
+    }
+
+    void HandleMenuTap(Vector2 screenPos)
+    {
+        // 命中"每日挑战"按钮则进每日；其余任意位置兜底进经典模式
+        // （保证任何情况下点一下就能开局，按钮命中失败也不会卡在菜单）
+        if (dailyBtnRT != null &&
+            RectTransformUtility.RectangleContainsScreenPoint(dailyBtnRT, screenPos, null))
+            OnDaily();
+        else
+            OnClassic();
+    }
+
+    RectTransform CreateMenuButton(string name, string label, float y)
+    {
+        var btnObj = new GameObject(name, typeof(RectTransform),
+            typeof(UnityEngine.UI.Image), typeof(UnityEngine.UI.Button));
+        btnObj.transform.SetParent(menuPanel.transform, false);
+        var brt = (RectTransform)btnObj.transform;
+        brt.anchorMin = brt.anchorMax = new Vector2(0.5f, 0.5f);
+        brt.anchoredPosition = new Vector2(0, y);
+        brt.sizeDelta = new Vector2(520, 140);
+        btnObj.GetComponent<UnityEngine.UI.Image>().color = new Color(0.99f, 0.76f, 0.25f);
+
+        var txtObj = new GameObject("Text", typeof(RectTransform));
+        txtObj.transform.SetParent(btnObj.transform, false);
+        var txt = txtObj.AddComponent<TextMeshProUGUI>();
+        var trt = (RectTransform)txtObj.transform;
+        trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
+        trt.offsetMin = trt.offsetMax = Vector2.zero;
+        txt.alignment = TextAlignmentOptions.Center;
+        txt.fontSize = 48;
+        txt.color = new Color(0.12f, 0.16f, 0.25f);
+        txt.raycastTarget = false;
+        txt.text = label;
+        return brt;
+    }
+
+    void HideMenu() { if (menuPanel != null) menuPanel.SetActive(false); }
+
+    void OnClassic()
+    {
+        isDaily = false;
+        gridSize = Mathf.Clamp(PlayerPrefs.GetInt("GridSize", 4), 3, 5);
+        BeginRound();
+    }
+
+    void OnDaily()
+    {
+        isDaily = true;
+        dailyDate = System.DateTime.Now.ToString("yyyyMMdd");
+        gridSize = 4;   // 每日挑战固定 4×4，保证全网同局
+        BeginRound();
+    }
+
+    void BeginRound()
+    {
+        HideMenu();
+        InitBoard();
+        if (isDaily)
+            ApplyBoard(PuzzleRules.ShuffledBoard(gridSize, int.Parse(dailyDate)));
+        else
+            Shuffle();
+        moveCount = 0;
+        gameState = GameState.Playing;
+        startTime = Time.time;
+        timerRunning = true;
+        int streak = PlayerPrefs.GetInt("daily_streak", 0);
+        UpdateStatusText(isDaily
+            ? (streak > 0 ? $"每日挑战！连续 {streak} 天" : "每日挑战！")
+            : "");
+    }
+
+    // 按布局数组落位（board[i,j]=拼图块编号，-1 为空格）——每日挑战的确定性洗牌
+    void ApplyBoard(int[,] board)
+    {
+        var placements = new List<(Piece p, int i, int j)>();
+        for (int i = 0; i < gridSize; i++)
+            for (int j = 0; j < gridSize; j++)
+            {
+                int t = board[i, j];
+                if (t < 0) continue;
+                var p = FindPieceByOriginal(t / gridSize, t % gridSize);
+                if (p != null) placements.Add((p, i, j));
+            }
+        foreach (var (p, _, _) in placements)
+            matrix[p.CurrentI, p.CurrentJ] = null;
+        foreach (var (p, i, j) in placements)
+        {
+            matrix[i, j] = p;
+            p.CurrentI = i; p.CurrentJ = j;
+            p.GameObject.transform.position = GetCellWorldPos(i, j);
+        }
+    }
+
+    Piece FindPieceByOriginal(int oi, int oj)
+    {
+        for (int i = 0; i < gridSize; i++)
+            for (int j = 0; j < gridSize; j++)
+                if (matrix[i, j] != null && matrix[i, j].OriginalI == oi && matrix[i, j].OriginalJ == oj)
+                    return matrix[i, j];
+        return null;
     }
 
     // === UI / Audio / FX ===
@@ -433,6 +595,10 @@ public class Game : MonoBehaviour
         {
             var canvas = new GameObject("UICanvas", typeof(Canvas), typeof(CanvasScaler));
             canvas.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+            if (UnityEngine.EventSystems.EventSystem.current == null)
+                new GameObject("EventSystem", typeof(UnityEngine.EventSystems.EventSystem),
+                    typeof(UnityEngine.EventSystems.StandaloneInputModule));
             var sc = canvas.GetComponent<CanvasScaler>();
             sc.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             sc.referenceResolution = new Vector2(1080, 1920);

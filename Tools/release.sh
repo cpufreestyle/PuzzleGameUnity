@@ -40,7 +40,7 @@ if [ "$up_total_kb" -gt 20480 ]; then echo "❌ 上传总量超 20MB（本地分
 if [ "$up_total_kb" -gt 19456 ]; then echo "⚠️ 上传总量已超 19MB，距 20MB 上限不足 1MB，新增资源须走 CDN"; fi
 echo "✅ 包体达标"
 
-step "4/4 分发（mode=$MODE）"
+step "4/4 dispatch (mode=$MODE)"
 case "$MODE" in
   preview)
     "$CLI" preview --project "$MG" --qr-format image --qr-output "$PROJ/Builds/wx_qr.png"
