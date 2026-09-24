@@ -45,11 +45,12 @@ public class Game : MonoBehaviour
     private float pressTime;
     private bool isLongPress;
 
-    // 模式：经典 / 每日挑战
+    // 模式：经典 / 每日挑战 / 我的照片
     private bool isDaily;
     private string dailyDate;
     private GameObject menuPanel;
-    private RectTransform classicBtnRT, dailyBtnRT;
+    private RectTransform classicBtnRT, dailyBtnRT, photoBtnRT;
+    private Sprite customPhotoSprite;   // 「我的照片」玩家自选拼图图
 
     void Start()
     {
@@ -96,7 +97,9 @@ public class Game : MonoBehaviour
 
         matrix = new Piece[gridSize, gridSize];
 
-        Sprite img = puzzleImages[currentImageIndex % puzzleImages.Length];
+        Sprite img = customPhotoSprite != null
+            ? customPhotoSprite
+            : puzzleImages[currentImageIndex % puzzleImages.Length];
         int idx = 0;
 
         // 创建 gridSize*gridSize-1 个拼图块
@@ -481,17 +484,21 @@ public class Game : MonoBehaviour
         title.raycastTarget = false;
         title.text = "邱明智慧拼图";
 
-        classicBtnRT = CreateMenuButton("Btn_Classic", "经典模式", -760);
-        dailyBtnRT = CreateMenuButton("Btn_Daily", "每日挑战", -560);
+        dailyBtnRT = CreateMenuButton("Btn_Daily", "每日挑战", -460);
+        photoBtnRT = CreateMenuButton("Btn_Photo", "我的照片", -660);
+        classicBtnRT = CreateMenuButton("Btn_Classic", "经典模式", -860);
     }
 
     void HandleMenuTap(Vector2 screenPos)
     {
-        // 命中"每日挑战"按钮则进每日；其余任意位置兜底进经典模式
+        // 依次命中「每日挑战 / 我的照片」；其余任意位置兜底进经典模式
         // （保证任何情况下点一下就能开局，按钮命中失败也不会卡在菜单）
         if (dailyBtnRT != null &&
             RectTransformUtility.RectangleContainsScreenPoint(dailyBtnRT, screenPos, null))
             OnDaily();
+        else if (photoBtnRT != null &&
+                 RectTransformUtility.RectangleContainsScreenPoint(photoBtnRT, screenPos, null))
+            OnMyPhoto();
         else
             OnClassic();
     }
@@ -536,6 +543,32 @@ public class Game : MonoBehaviour
         dailyDate = System.DateTime.Now.ToString("yyyyMMdd");
         gridSize = 4;   // 每日挑战固定 4×4，保证全网同局
         BeginRound();
+    }
+
+    void OnMyPhoto()
+    {
+        // 相册/拍照选一张图，直接变成拼图（不经 CDN、零包体成本）
+        WeChatWASM.WX.ChooseImage(new WeChatWASM.ChooseImageOption
+        {
+            count = 1,
+            sizeType = new[] { "compressed" },
+            sourceType = new[] { "album", "camera" },
+            success = res =>
+            {
+                var paths = res.tempFilePaths;
+                if (paths == null || paths.Length == 0) return;
+                byte[] bytes = WeChatWASM.WX.GetFileSystemManager().ReadFileSync(paths[0]);
+                if (bytes == null || bytes.Length == 0) return;
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!tex.LoadImage(bytes)) return;
+                customPhotoSprite = Sprite.Create(tex,
+                    new Rect(0, 0, tex.width, tex.height),
+                    new Vector2(0.5f, 0.5f), tex.width / 2f);
+                isDaily = false;
+                gridSize = Mathf.Clamp(PlayerPrefs.GetInt("GridSize", 4), 3, 5);
+                BeginRound();
+            }
+        });
     }
 
     void BeginRound()
