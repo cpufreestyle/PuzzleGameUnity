@@ -1062,7 +1062,7 @@ PlayerSettings:
   webGLMemoryGeometricGrowthCap: 96
   webGLPowerPreference: 2
   scriptingDefineSymbols:
-    WeixinMiniGame: TMP_PRESENT;ALTTESTER
+    WeixinMiniGame: TMP_PRESENT
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend:

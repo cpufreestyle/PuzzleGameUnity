@@ -23,7 +23,9 @@
         "Newtonsoft.Json.dll"
     ],
     "autoReferenced": true,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "ALTTESTER"
+    ],
     "versionDefines": [
         {
             "name": "com.unity.addressables",

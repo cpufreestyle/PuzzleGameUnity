@@ -77,6 +77,14 @@ public class Game : MonoBehaviour
         UpdateBestRecord();
         EnsureMenu();
         UpdateStatusText("");
+
+        // 启动完成上报（进入菜单、玩家可交互）——微信后台据此统计真实启动耗时，是启动优化的数据前提。
+        // 插件侧逻辑：callMain 后 60s 内若未收到本上报，会打「[开发阶段提示]请使用自定义上报能力 WX.ReportGameStart」（线上版跳过该检查）。
+        // WX 类仅存在于 WebGL / 微信小游戏平台（插件源码用 #if UNITY_WEBGL || WEIXINMINIGAME || UNITY_EDITOR 守卫），故此处同步守卫，
+        // 避免 Android/iOS/Standalone 构建引用到不存在的类型。此处用全限定名，省掉一个会污染其他平台的条件 using。
+#if UNITY_WEBGL || WEIXINMINIGAME
+        WeChatWASM.WX.ReportGameStart();
+#endif
     }
 
     void InitBoard()

@@ -1,3 +1,6 @@
+// AltTester 自动化接线脚本：仅当定义 ALTTESTER 宏时参与编译。
+// 测试框架不应进入正式构建（小游戏/发布包），故与 SDK 的 asmdef defineConstraints 同条件。
+#if ALTTESTER
 using UnityEngine;
 using UnityEditor;
 using AltTester.AltTesterUnitySDK.Editor;
@@ -50,3 +53,4 @@ public static class AltTestSetup
         EditorApplication.isPlaying = true;
     }
 }
+#endif

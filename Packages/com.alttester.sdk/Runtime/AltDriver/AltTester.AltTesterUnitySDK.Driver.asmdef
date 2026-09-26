@@ -12,7 +12,9 @@
         "altwebsocket-sharp.dll"
     ],
     "autoReferenced": true,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "ALTTESTER"
+    ],
     "versionDefines": [],
     "noEngineReferences": false
 }

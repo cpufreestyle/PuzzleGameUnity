@@ -20,7 +20,9 @@
         "NLog.dll"
     ],
     "autoReferenced": true,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "ALTTESTER"
+    ],
     "versionDefines": [
         {
             "name": "com.unity.inputsystem",
