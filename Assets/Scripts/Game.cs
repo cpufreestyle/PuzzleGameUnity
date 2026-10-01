@@ -36,6 +36,19 @@ public class Game : MonoBehaviour
     private AudioClip snapClip, winClip;
     private Camera mainCam;
 
+    // === 视觉主题（菜单/对局统一色板） ===
+    private readonly Color themeInk = new Color(0.14f, 0.17f, 0.24f);   // 主按钮文字：深蓝灰
+    private readonly Color themePrimary = new Color(1f, 0.73f, 0.29f);  // 主按钮：暖橙
+    private readonly Color themePrimaryPress = new Color(0.90f, 0.62f, 0.22f);
+    private readonly Color themeGhost = new Color(1f, 1f, 1f, 0.16f);   // 次按钮：半透明白
+    private readonly Color themeGhostPress = new Color(1f, 1f, 1f, 0.30f);
+    private readonly Color themeSub = new Color(0.72f, 0.78f, 0.86f);   // 次级文字：蓝灰
+    private readonly Color pageBg = new Color(0.10f, 0.12f, 0.17f);     // 页面背景：深蓝灰
+    private Sprite roundedSprite;                                       // 程序生成圆角矩形（9-slice）
+    private SpriteRenderer boardPlate;                                  // 棋盘底板（衬托拼图）
+    private UnityEngine.UI.Image pressedBtnImg;                         // 当前按下的菜单按钮
+
+
     // Swipe
     private Vector2 touchStart;
     private bool isSwiping;
@@ -58,6 +71,9 @@ public class Game : MonoBehaviour
         // 强制相机视口比例 = 画布比例, 防止模拟器/真机 canvas 尺寸上报错乱导致的拉伸
         if (Screen.height > 0)
             mainCam.aspect = (float)Screen.width / Screen.height;
+        // 页面背景：统一深蓝灰（白字/UI 的对比度底），替代默认灰蓝
+        mainCam.clearFlags = CameraClearFlags.SolidColor;
+        mainCam.backgroundColor = pageBg;
         EnsureUI();
         EnsureAudio();
 
@@ -147,6 +163,17 @@ public class Game : MonoBehaviour
         ghost.transform.position = Vector3.zero;
         ghost.enabled = false;
 
+        // 棋盘底板：圆角深色板衬托拼块，给棋盘「容器」感（尺寸随棋盘，见 ScalePieces）
+        if (boardPlate == null)
+        {
+            boardPlate = new GameObject("board-plate").AddComponent<SpriteRenderer>();
+            boardPlate.sprite = RoundedSprite();
+            boardPlate.drawMode = SpriteDrawMode.Sliced;   // 9-slice：任意尺寸不失圆角
+            boardPlate.sortingOrder = -1;
+            boardPlate.color = new Color(1f, 1f, 1f, 0.06f);
+            boardPlate.transform.position = Vector3.zero;
+        }
+
         ScalePieces();
     }
 
@@ -193,9 +220,14 @@ public class Game : MonoBehaviour
         switch (gameState)
         {
             case GameState.Menu:
-                // 菜单态自管点击（见 HandleMenuTap 注释）
+                // 菜单态自管点击（见 HandleMenuTap 注释）；按下先高亮按钮给即时反馈
+                if (Input.GetMouseButtonDown(0))
+                    SetMenuPressed(Input.mousePosition);
                 if (Input.GetMouseButtonUp(0))
+                {
+                    RestoreMenuPressed();
                     HandleMenuTap(Input.mousePosition);
+                }
                 break;
             case GameState.Start:
                 if (Input.GetMouseButtonUp(0))
@@ -211,7 +243,7 @@ public class Game : MonoBehaviour
                 if (timerRunning)
                 {
                     float elapsed = Time.time - startTime;
-                    UpdateStatusText($"步数: {moveCount}  错位: {CountMisplaced()}  {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}");
+                    UpdateStatusText($"步数 {moveCount} · 错位 {CountMisplaced()} · {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}");
                 }
                 CheckInput();
                 break;
@@ -433,7 +465,15 @@ public class Game : MonoBehaviour
             PlayerPrefs.Save();
             tail = $"每日挑战完成！连续 {streak} 天\n点击返回菜单";
         }
-        UpdateStatusText($"通关！评级 {rating}\n步数: {moveCount}  时间: {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}\n{tail}");
+        // 结算层级化：评级大字（金）→ 步数/用时 → 操作提示（灰），比三行同权重纯文本清晰
+        // TMP 富文本直接生效；结算文案下移居中（对局态的顶部小字在场景重载时自动复位）
+        UpdateStatusText(
+            $"<size=96><color=#FFD166>评级 {rating}</color></size>\n" +
+            $"<size=42>步数 {moveCount} · 用时 {Mathf.FloorToInt(elapsed/60):00}:{Mathf.FloorToInt(elapsed%60):00}</size>\n" +
+            $"<size=30><color=#AAB4C0>{tail}</color></size>");
+        var srt = statusText.rectTransform;
+        srt.anchoredPosition = new Vector2(0, -330);
+        srt.sizeDelta = new Vector2(1000, 760);
         SaveBestRecord(moveCount, elapsed);
         UpdateBestRecord();
     }
@@ -479,26 +519,44 @@ public class Game : MonoBehaviour
         dim.color = new Color(0f, 0f, 0f, 0.45f);
         dim.raycastTarget = true;
 
-        var titleObj = new GameObject("MenuTitle", typeof(RectTransform));
-        titleObj.transform.SetParent(menuPanel.transform, false);
-        var title = titleObj.AddComponent<TextMeshProUGUI>();
-        var trt = (RectTransform)titleObj.transform;
-        trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 1f);
-        trt.anchoredPosition = new Vector2(0, -260);
-        trt.sizeDelta = new Vector2(900, 120);
-        title.alignment = TextAlignmentOptions.Center;
-        title.fontSize = 72;
-        title.color = Color.white;
-        title.raycastTarget = false;
-        title.text = "邱明智慧拼图";
+        // 标题（与小程序注册名保持一致，不含个人姓名）
+        MakeText("MenuTitle", "智慧拼图", 84, Color.white,
+            new Vector2(0.5f, 1f), new Vector2(0, -420), new Vector2(900, 140));
+        // 副标题：一句话说明玩法
+        MakeText("MenuSub", "滑动拼块 · 还原原图", 34, themeSub,
+            new Vector2(0.5f, 1f), new Vector2(0, -555), new Vector2(900, 60));
 
-        dailyBtnRT = CreateMenuButton("Btn_Daily", "每日挑战", -460);
-        photoBtnRT = CreateMenuButton("Btn_Photo", "我的照片", -660);
-        classicBtnRT = CreateMenuButton("Btn_Classic", "经典模式", -860);
+        // 主操作置顶：经典模式；次操作半透明白
+        classicBtnRT = CreateMenuButton("Btn_Classic", "经典模式", "滑动还原 · 由易到难", -760, true);
+        dailyBtnRT = CreateMenuButton("Btn_Daily", "每日挑战", "全网同局 · 4×4", -940, false);
+        photoBtnRT = CreateMenuButton("Btn_Photo", "我的照片", "相册 / 拍照自定义", -1120, false);
+
+        // 菜单态也展示最佳成绩：把底部常驻的最佳成绩文本提到遮罩之上
+        bestRecordText.transform.SetAsLastSibling();
     }
+
+    // 在菜单面板上创建一个 TMP 文本（局部工具函数，统一对齐/尺寸写法）
+    void MakeText(string objName, string content, float size, Color color,
+        Vector2 anchor, Vector2 pos, Vector2 sizeDelta)
+    {
+        var obj = new GameObject(objName, typeof(RectTransform));
+        obj.transform.SetParent(menuPanel.transform, false);
+        var t = obj.AddComponent<TextMeshProUGUI>();
+        var rt = (RectTransform)obj.transform;
+        rt.anchorMin = rt.anchorMax = anchor;
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = sizeDelta;
+        t.alignment = TextAlignmentOptions.Center;
+        t.fontSize = size;
+        t.color = color;
+        t.raycastTarget = false;
+        t.text = content;
+    }
+
 
     void HandleMenuTap(Vector2 screenPos)
     {
+        RestoreMenuPressed();
         // 依次命中「每日挑战 / 我的照片」；其余任意位置兜底进经典模式
         // （保证任何情况下点一下就能开局，按钮命中失败也不会卡在菜单）
         if (dailyBtnRT != null &&
@@ -511,7 +569,40 @@ public class Game : MonoBehaviour
             OnClassic();
     }
 
-    RectTransform CreateMenuButton(string name, string label, float y)
+    // 菜单按钮按压反馈：按下变深，抬起恢复（提升可点性感知）
+    Color pressedBase;
+    void SetMenuPressed(Vector2 screenPos)
+    {
+        pressedBtnImg = null;
+        var (img, primary) = MenuBtnAt(screenPos);
+        if (img == null) return;
+        pressedBtnImg = img;
+        pressedBase = img.color;
+        img.color = primary ? themePrimaryPress : themeGhostPress;
+    }
+
+    void RestoreMenuPressed()
+    {
+        if (pressedBtnImg != null) pressedBtnImg.color = pressedBase;
+        pressedBtnImg = null;
+    }
+
+    (UnityEngine.UI.Image, bool) MenuBtnAt(Vector2 screenPos)
+    {
+        if (dailyBtnRT != null &&
+            RectTransformUtility.RectangleContainsScreenPoint(dailyBtnRT, screenPos, null))
+            return (dailyBtnRT.GetComponent<UnityEngine.UI.Image>(), false);
+        if (photoBtnRT != null &&
+            RectTransformUtility.RectangleContainsScreenPoint(photoBtnRT, screenPos, null))
+            return (photoBtnRT.GetComponent<UnityEngine.UI.Image>(), false);
+        if (classicBtnRT != null &&
+            RectTransformUtility.RectangleContainsScreenPoint(classicBtnRT, screenPos, null))
+            return (classicBtnRT.GetComponent<UnityEngine.UI.Image>(), true);
+        return (null, false);
+    }
+
+
+    RectTransform CreateMenuButton(string name, string label, string sub, float y, bool primary)
     {
         var btnObj = new GameObject(name, typeof(RectTransform),
             typeof(UnityEngine.UI.Image), typeof(UnityEngine.UI.Button));
@@ -519,22 +610,73 @@ public class Game : MonoBehaviour
         var brt = (RectTransform)btnObj.transform;
         brt.anchorMin = brt.anchorMax = new Vector2(0.5f, 0.5f);
         brt.anchoredPosition = new Vector2(0, y);
-        brt.sizeDelta = new Vector2(520, 140);
-        btnObj.GetComponent<UnityEngine.UI.Image>().color = new Color(0.99f, 0.76f, 0.25f);
+        brt.sizeDelta = new Vector2(640, 150);
 
+        // 圆角按钮：程序生成 9-slice 圆角矩形，主按钮实心主题色 / 次按钮半透明白
+        var img = btnObj.GetComponent<UnityEngine.UI.Image>();
+        img.sprite = RoundedSprite();
+        img.type = UnityEngine.UI.Image.Type.Sliced;
+        img.color = primary ? themePrimary : themeGhost;
+
+        // 主文字（有副标题时略上移）
         var txtObj = new GameObject("Text", typeof(RectTransform));
         txtObj.transform.SetParent(btnObj.transform, false);
         var txt = txtObj.AddComponent<TextMeshProUGUI>();
         var trt = (RectTransform)txtObj.transform;
-        trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
-        trt.offsetMin = trt.offsetMax = Vector2.zero;
+        trt.anchorMin = trt.anchorMax = new Vector2(0.5f, 0.5f);
+        trt.sizeDelta = new Vector2(600, 70);
+        trt.anchoredPosition = new Vector2(0, sub != null ? 22 : 0);
         txt.alignment = TextAlignmentOptions.Center;
-        txt.fontSize = 48;
-        txt.color = new Color(0.12f, 0.16f, 0.25f);
+        txt.fontSize = 46;
+        txt.color = primary ? themeInk : Color.white;
         txt.raycastTarget = false;
         txt.text = label;
+
+        // 副标题：说明该模式的玩法/范围
+        if (sub != null)
+        {
+            var subObj = new GameObject("Sub", typeof(RectTransform));
+            subObj.transform.SetParent(btnObj.transform, false);
+            var st = subObj.AddComponent<TextMeshProUGUI>();
+            var srt = (RectTransform)subObj.transform;
+            srt.anchorMin = srt.anchorMax = new Vector2(0.5f, 0.5f);
+            srt.sizeDelta = new Vector2(600, 36);
+            srt.anchoredPosition = new Vector2(0, -38);
+            st.alignment = TextAlignmentOptions.Center;
+            st.fontSize = 22;
+            st.color = primary ? new Color(0.42f, 0.33f, 0.14f) : themeSub;
+            st.raycastTarget = false;
+            st.text = sub;
+        }
         return brt;
     }
+
+    // 程序生成圆角矩形 sprite（96×48 @100PPU，四边 16px 圆角），按 9-slice 拉伸复用
+    Sprite RoundedSprite()
+    {
+        if (roundedSprite != null) return roundedSprite;
+        int w = 96, h = 48, rad = 16;
+        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        var px = new Color32[w * h];
+        const float aa = 1.5f;   // 边缘抗锯齿宽度（像素）
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                // 圆角矩形 SDF：点到「内芯矩形」的距离减去圆角半径，<0 在内部
+                float cx = Mathf.Clamp(x, rad, w - rad);
+                float cy = Mathf.Clamp(y, rad, h - rad);
+                float d = Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) - rad;
+                float a = Mathf.Clamp01(0.5f - d / aa);
+                px[y * w + x] = new Color32(255, 255, 255, (byte)(a * 255));
+            }
+        tex.SetPixels32(px);
+        tex.Apply();
+        roundedSprite = Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 100f,
+            0, SpriteMeshType.FullRect, new Vector4(rad, rad, rad, rad));
+        return roundedSprite;
+    }
+
 
     void HideMenu() { if (menuPanel != null) menuPanel.SetActive(false); }
 
@@ -763,6 +905,10 @@ public class Game : MonoBehaviour
             ghost.transform.localScale = new Vector3(
                 cellW * gridSize / b.size.x, cellH * gridSize / b.size.y, 1f);
         }
+
+        // 底板随棋盘缩放：四周各留 0.25 世界单位内边距
+        if (boardPlate != null)
+            boardPlate.size = new Vector2(cellW * gridSize + 0.5f, cellH * gridSize + 0.5f);
     }
 
     Piece GetPieceByGO(GameObject go)
