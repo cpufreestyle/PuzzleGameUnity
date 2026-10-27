@@ -64,6 +64,8 @@ public class Game : MonoBehaviour
     private GameObject menuPanel;
     private RectTransform classicBtnRT, dailyBtnRT, photoBtnRT;
     private Sprite customPhotoSprite;   // 「我的照片」玩家自选拼图图
+    private GameObject backBtn;        // 局内「返回」按钮（Playing 态可见）
+    private bool pressedOnBack;        // 本次手势起点落在返回按钮上（整条手势不作用于棋盘）
 
     void Start()
     {
@@ -92,6 +94,7 @@ public class Game : MonoBehaviour
         InitBoard();
         UpdateBestRecord();
         EnsureMenu();
+        EnsureBackButton();
         UpdateStatusText("");
 
         // 启动完成上报（进入菜单、玩家可交互）——微信后台据此统计真实启动耗时，是启动优化的数据前提。
@@ -271,6 +274,20 @@ public class Game : MonoBehaviour
             isSwiping = false;
             isLongPress = false;
             pressTime = 0f;
+            // 起点在返回按钮上：整条手势视为 UI 操作，不吃棋盘输入
+            pressedOnBack = backBtn != null && backBtn.activeSelf &&
+                RectTransformUtility.RectangleContainsScreenPoint(
+                    (RectTransform)backBtn.transform, (Vector2)Input.mousePosition, null);
+        }
+        if (pressedOnBack)
+        {
+            if (Input.GetMouseButtonUp(0))
+            {
+                pressedOnBack = false;
+                isSwiping = false;
+                ReturnToMenu();
+            }
+            return;
         }
         if (Input.GetMouseButton(0))
         {
@@ -446,6 +463,7 @@ public class Game : MonoBehaviour
 
         gameState = GameState.End;
         timerRunning = false;
+        if (backBtn != null) backBtn.SetActive(false);
         float elapsed = Time.time - startTime;
         StartCoroutine(PlayWinSound());
         if (winClip != null) audioSource.PlayOneShot(winClip);
@@ -680,6 +698,61 @@ public class Game : MonoBehaviour
 
     void HideMenu() { if (menuPanel != null) menuPanel.SetActive(false); }
 
+    // 局内返回：回主菜单（重置棋盘为菜单背景，不重载场景）
+    void ReturnToMenu()
+    {
+        if (backBtn != null) backBtn.SetActive(false);
+        customPhotoSprite = null;     // 照片仅限当局
+        isDaily = false;
+        gameState = GameState.Menu;
+        timerRunning = false;
+        if (menuPanel != null) menuPanel.SetActive(true);
+        InitBoard();
+        ResetStatusLayout();
+        UpdateStatusText("");
+        UpdateBestRecord();
+    }
+
+    // 结算页会移动/放大状态文本，回菜单或开新局时复位回顶部小字位
+    void ResetStatusLayout()
+    {
+        var rt = statusText.rectTransform;
+        rt.anchoredPosition = new Vector2(0, -50);
+        rt.sizeDelta = new Vector2(900, 100);
+    }
+
+    // 局内「返回」按钮：左上角半透明胶囊，主题与菜单一致（自管命中，见 CheckInput）
+    void EnsureBackButton()
+    {
+        if (backBtn != null) return;
+        var canvas = statusText.transform.parent;
+        backBtn = new GameObject("Btn_Back", typeof(RectTransform),
+            typeof(UnityEngine.UI.Image), typeof(UnityEngine.UI.Button));
+        backBtn.transform.SetParent(canvas, false);
+        var brt = (RectTransform)backBtn.transform;
+        brt.anchorMin = brt.anchorMax = new Vector2(0f, 1f);
+        brt.anchoredPosition = new Vector2(110, -70);
+        brt.sizeDelta = new Vector2(180, 88);
+
+        var img = backBtn.GetComponent<UnityEngine.UI.Image>();
+        img.sprite = RoundedSprite();
+        img.type = UnityEngine.UI.Image.Type.Sliced;
+        img.color = themeGhost;
+
+        var txtObj = new GameObject("Text", typeof(RectTransform));
+        txtObj.transform.SetParent(backBtn.transform, false);
+        var txt = txtObj.AddComponent<TextMeshProUGUI>();
+        var trt = (RectTransform)txtObj.transform;
+        trt.anchorMin = Vector2.zero; trt.anchorMax = Vector2.one;
+        trt.offsetMin = trt.offsetMax = Vector2.zero;
+        txt.alignment = TextAlignmentOptions.Center;
+        txt.fontSize = 36;
+        txt.color = Color.white;
+        txt.raycastTarget = false;
+        txt.text = "返回";
+        backBtn.SetActive(false);
+    }
+
     void OnClassic()
     {
         isDaily = false;
@@ -724,6 +797,8 @@ public class Game : MonoBehaviour
     void BeginRound()
     {
         HideMenu();
+        if (backBtn != null) backBtn.SetActive(true);
+        ResetStatusLayout();
         InitBoard();
         if (isDaily)
             ApplyBoard(PuzzleRules.ShuffledBoard(gridSize, int.Parse(dailyDate)));
