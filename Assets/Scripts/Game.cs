@@ -42,7 +42,7 @@ public class Game : MonoBehaviour
     private readonly Color themePrimaryPress = new Color(0.90f, 0.62f, 0.22f);
     private readonly Color themeGhost = new Color(1f, 1f, 1f, 0.16f);   // 次按钮：半透明白
     private readonly Color themeGhostPress = new Color(1f, 1f, 1f, 0.30f);
-    private readonly Color themeSub = new Color(0.72f, 0.78f, 0.86f);   // 次级文字：蓝灰
+    private readonly Color themeSub = new Color(0.78f, 0.83f, 0.90f);   // 次级文字：蓝灰
     private readonly Color pageBg = new Color(0.10f, 0.12f, 0.17f);     // 页面背景：深蓝灰
     private Sprite roundedSprite;                                       // 程序生成圆角矩形（9-slice）
     private SpriteRenderer boardPlate;                                  // 棋盘底板（衬托拼图）
@@ -513,9 +513,9 @@ public class Game : MonoBehaviour
         int bm = PlayerPrefs.GetInt(key + "_moves", 0);
         float bt = PlayerPrefs.GetFloat(key + "_time", 0);
         if (bm > 0)
-            bestRecordText.text = $"最佳: {bm}步 {Mathf.FloorToInt(bt/60):00}:{Mathf.FloorToInt(bt%60):00}";
+            bestRecordText.text = $"最佳：{bm} 步 {Mathf.FloorToInt(bt/60):00}:{Mathf.FloorToInt(bt%60):00}";
         else
-            bestRecordText.text = "最佳: 暂无";
+            bestRecordText.text = "最佳：暂无";
     }
 
     // === 模式菜单（uGUI 视觉 + 自管命中测试） ===
@@ -545,9 +545,9 @@ public class Game : MonoBehaviour
             new Vector2(0.5f, 1f), new Vector2(0, -555), new Vector2(900, 60));
 
         // 主操作置顶：经典模式；次操作半透明白
-        classicBtnRT = CreateMenuButton("Btn_Classic", "经典模式", "滑动还原 · 由易到难", -760, true);
-        dailyBtnRT = CreateMenuButton("Btn_Daily", "每日挑战", "全网同局 · 4×4", -940, false);
-        photoBtnRT = CreateMenuButton("Btn_Photo", "我的照片", "相册 / 拍照自定义", -1120, false);
+        classicBtnRT = CreateMenuButton("Btn_Classic", "经典模式", "滑动还原 · 由易到难", -700, true);
+        dailyBtnRT = CreateMenuButton("Btn_Daily", "每日挑战", "全网同局 · 4×4", -880, false);
+        photoBtnRT = CreateMenuButton("Btn_Photo", "我的照片", "相册 / 拍照自定义", -1060, false);
 
         // 菜单态也展示最佳成绩：把底部常驻的最佳成绩文本提到遮罩之上
         bestRecordText.transform.SetAsLastSibling();
@@ -626,7 +626,8 @@ public class Game : MonoBehaviour
             typeof(UnityEngine.UI.Image), typeof(UnityEngine.UI.Button));
         btnObj.transform.SetParent(menuPanel.transform, false);
         var brt = (RectTransform)btnObj.transform;
-        brt.anchorMin = brt.anchorMax = new Vector2(0.5f, 0.5f);
+        // 与标题/副标题统一用顶部锚点：y 自屏幕顶往下计（中心锚点会把按钮推到底缘外被裁切，实测踩坑）
+        brt.anchorMin = brt.anchorMax = new Vector2(0.5f, 1f);
         brt.anchoredPosition = new Vector2(0, y);
         brt.sizeDelta = new Vector2(640, 150);
 
